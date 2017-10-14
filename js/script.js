@@ -56,7 +56,14 @@ $(function(){
             storage: 'BROWSER_STORAGE',
             name: 'bitcoin-' + period,
             outOfDateAfter: 15 * 60 * 1000,
-            mapData: r => App.API.mapData(r, getLabelFormat(period)),
+            mapData: r => {
+                const data = App.API.mapData(r, getLabelFormat(period));
+
+                // That's a hack. Initiate the chart every time fresh data comes
+                chart.init(data);
+
+                return data;
+            },
             request: () => getBitcoinData(period)
         })
     );
@@ -64,8 +71,34 @@ $(function(){
     $dataPeriods.on('click', function(){
         const period = $(this).data('period');
 
+        Object.keys(PERIODS).forEach( period => {
+            if (BitcoinRepository[period]) {
+                BitcoinRepository[period].destroySyncer();
+            }
+        });
+
         BitcoinRepository[period].getData()
-            .then(_data => chart.init(_data));
+            .then(data => chart.init(data));
+
+        const currentMin = new Date().getMinutes();
+
+        let timeout;
+        if (currentMin === 0 || currentMin === 15 || currentMin === 30 || currentMin === 45) {
+            timeout = 10 * 1000; // 10 seconds
+        } else if (currentMin < 15) {
+            timeout = (15 - currentMin) * 1000 + (10 * 1000);
+        } else if (currentMin > 15 && currentMin < 30) {
+            timeout = (30 - currentMin) * 1000 + (10 * 1000);
+        } else if (currentMin > 30 && currentMin < 45) {
+            timeout = (45 - currentMin) * 1000 + (10 * 1000);
+        } else if (currentMin > 45 && currentMin <= 59) {
+            timeout = (60 - currentMin) * 1000 + (10 * 1000);
+        }
+
+        setTimeout( () => {
+            BitcoinRepository[period].getData()
+                .then(() => BitcoinRepository[period].initSyncer());
+        }, timeout);
     });
 
     $dataPeriods.eq(1).trigger('click');
@@ -74,14 +107,27 @@ $(function(){
     BitcoinRepository['NOW'] = new SuperRepo({
         storage: 'BROWSER_STORAGE',
         name: 'bitcoin-now',
-        outOfDateAfter: 15 * 60 * 1000,
+        outOfDateAfter: 60 * 1000,
         dataModel: [{
             value: 'value'
         }],
-        mapData: data => data[0].value,
+        mapData: data => {
+            const result = data[0].value;
+
+            /**
+             * That's a hack.
+             * Beautify the price.
+             * https://stackoverflow.com/a/14467460/1333836
+             */
+            priceNow = Math.round(result).toString().replace(/(\d)(?=(\d\d\d)+(?!\d))/g, "$1,");
+            document.querySelector('#price-now').textContent = `$${result}`;
+
+            return result;
+        },
         request: () => App.API.getBitcoinRatesNow()
-    })
-    .getData().then( priceNow => {
+    });
+
+    BitcoinRepository['NOW'].getData().then( priceNow => {
         /**
          * Beautify the price.
          * https://stackoverflow.com/a/14467460/1333836
@@ -90,4 +136,5 @@ $(function(){
         document.querySelector('#price-now').textContent = `$${priceNow}`;
     });
 
+    BitcoinRepository['NOW'].initSyncer();
 });
